@@ -186,7 +186,7 @@ def log_activity(request: Request, response_status: int, db: Session, username: 
     db.add(log_entry)
     db.commit()
 
-app = FastAPI(title="Notes API", version="1.0.0", servers=[{"url": "http://localhost:8000", "description": "Local server"}])
+app = FastAPI(title="Notes API", version="1.0.0")
 
 # Add CORS middleware to allow frontend requests
 origins = [
