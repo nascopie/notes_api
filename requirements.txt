@@ -4,3 +4,4 @@ pydantic
 passlib[bcrypt]
 PyJWT
 sqlalchemy
+python-multipart
