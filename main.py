@@ -1,5 +1,5 @@
-from fastapi import FastAPI, Depends, HTTPException, status, Request
-from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
+from fastapi import FastAPI, Depends, HTTPException, status, Request, Security
+from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm, APIKeyHeader
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List, Optional
@@ -21,9 +21,12 @@ Base = declarative_base()
 SECRET_KEY = "secret"
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 30
+API_KEY_NAME = "X-API-Key"
+API_KEYS = ["mysecretapikey"]  # List of valid API keys
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/token")
+api_key_header = APIKeyHeader(name=API_KEY_NAME, auto_error=False)
 
 # Role Enum
 class Role(str, Enum):
@@ -156,6 +159,13 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(
             detail="Invalid authentication credentials",
         )
 
+def get_api_key(api_key: str = Security(api_key_header)):
+    if api_key not in API_KEYS:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail="Could not validate API key"
+        )
+    return api_key
+    
 # Logging Function
 def log_activity(request: Request, response_status: int, db: Session, username: Optional[str] = None):
     log_entry = LogDB(
@@ -233,7 +243,7 @@ def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(), db:
     return {"access_token": access_token, "token_type": "bearer"}
 
 @app.post("/notes", response_model=Note)
-def create_note(note: NoteCreate, current_user: UserDB = Depends(get_current_user), db: Session = Depends(get_db)):
+def create_note(note: NoteCreate, current_user: UserDB = Depends(get_current_user), db: Session = Depends(get_db), api_key: str = Depends(get_api_key)):
     new_note = NoteDB(
         title=note.title,
         content=note.content,
@@ -246,7 +256,7 @@ def create_note(note: NoteCreate, current_user: UserDB = Depends(get_current_use
     return new_note
 
 @app.get("/notes", response_model=List[Note])
-def get_notes(current_user: UserDB = Depends(get_current_user), db: Session = Depends(get_db)):
+def get_notes(current_user: UserDB = Depends(get_current_user), db: Session = Depends(get_db), api_key: str = Depends(get_api_key)):
     notes = db.query(NoteDB).all()
     result = [
         note for note in notes
@@ -255,7 +265,7 @@ def get_notes(current_user: UserDB = Depends(get_current_user), db: Session = De
     return result
 
 @app.delete("/notes/{note_id}", response_model=Note)
-def delete_note(note_id: int, current_user: UserDB = Depends(get_current_user), db: Session = Depends(get_db)):
+def delete_note(note_id: int, current_user: UserDB = Depends(get_current_user), db: Session = Depends(get_db), api_key: str = Depends(get_api_key)):
     note = db.query(NoteDB).filter(NoteDB.id == note_id).first()
     if not note:
         raise HTTPException(status_code=404, detail="Note not found")
@@ -266,7 +276,7 @@ def delete_note(note_id: int, current_user: UserDB = Depends(get_current_user), 
     return note
 
 @app.put("/notes/{note_id}", response_model=Note)
-def update_note(note_id: int, note_update: NoteUpdate, current_user: UserDB = Depends(get_current_user), db: Session = Depends(get_db)):
+def update_note(note_id: int, note_update: NoteUpdate, current_user: UserDB = Depends(get_current_user), db: Session = Depends(get_db), api_key: str = Depends(get_api_key)):
     note = db.query(NoteDB).filter(NoteDB.id == note_id).first()
     if not note:
         raise HTTPException(status_code=404, detail="Note not found")
@@ -280,7 +290,7 @@ def update_note(note_id: int, note_update: NoteUpdate, current_user: UserDB = De
     return note
 
 @app.post("/users", response_model=User)
-def create_new_user(user: UserCreate, db: Session = Depends(get_db)):
+def create_new_user(user: UserCreate, db: Session = Depends(get_db), api_key: str = Depends(get_api_key)):
     if db.query(UserDB).filter(UserDB.username == user.username).first():
         raise HTTPException(status_code=400, detail="User already exists")
     hashed_password = get_password_hash(user.password)
@@ -297,14 +307,14 @@ def create_new_user(user: UserCreate, db: Session = Depends(get_db)):
     return new_user
 
 @app.get("/logs", response_model=List[Log])
-def get_logs(current_user: UserDB = Depends(get_current_user), db: Session = Depends(get_db)):
+def get_logs(current_user: UserDB = Depends(get_current_user), db: Session = Depends(get_db), api_key: str = Depends(get_api_key)):
     if current_user.role != Role.ADMIN.value:
         raise HTTPException(status_code=403, detail="Not enough permissions")
     logs = db.query(LogDB).all()
     return logs
 
 @app.put("/users/{user_name}/deactivate", response_model=User)
-def deactivate_user(user_name, current_user: UserDB = Depends(get_current_user), db: Session = Depends(get_db)):
+def deactivate_user(user_name, current_user: UserDB = Depends(get_current_user), db: Session = Depends(get_db), api_key: str = Depends(get_api_key)):
     if current_user.role != Role.ADMIN.value:
         raise HTTPException(status_code=403, detail="Not enough permissions")
     user = db.query(UserDB).filter(UserDB.username == user_name).first()
@@ -316,7 +326,7 @@ def deactivate_user(user_name, current_user: UserDB = Depends(get_current_user),
     return user
 
 @app.put("/users/{user_name}/reset_password", response_model=User)
-def reset_password(user_name, new_password: str, current_user: UserDB = Depends(get_current_user), db: Session = Depends(get_db)):
+def reset_password(user_name, new_password: str, current_user: UserDB = Depends(get_current_user), db: Session = Depends(get_db), api_key: str = Depends(get_api_key)):
     if current_user.role != Role.ADMIN.value:
         raise HTTPException(status_code=403, detail="Not enough permissions")
     user = db.query(UserDB).filter(UserDB.username == user_name).first()
@@ -328,7 +338,7 @@ def reset_password(user_name, new_password: str, current_user: UserDB = Depends(
     return user
 
 @app.put("/users/{user_name}/update_role", response_model=User)
-def update_user_role(user_name, user_update_role: UserUpdateRole, current_user: UserDB = Depends(get_current_user), db: Session = Depends(get_db)):
+def update_user_role(user_name, user_update_role: UserUpdateRole, current_user: UserDB = Depends(get_current_user), db: Session = Depends(get_db), api_key: str = Depends(get_api_key)):
     if current_user.role != Role.ADMIN.value:
         raise HTTPException(status_code=403, detail="Not enough permissions")
     user = db.query(UserDB).filter(UserDB.username == user_name).first()
@@ -340,14 +350,14 @@ def update_user_role(user_name, user_update_role: UserUpdateRole, current_user: 
     return user
 
 @app.get("/users", response_model=List[User])
-def get_all_users(current_user: UserDB = Depends(get_current_user), db: Session = Depends(get_db)):
+def get_all_users(current_user: UserDB = Depends(get_current_user), db: Session = Depends(get_db), api_key: str = Depends(get_api_key)):
     if current_user.role != Role.ADMIN.value:
         raise HTTPException(status_code=403, detail="Not enough permissions")
     users = db.query(UserDB).all()
     return users
 
 @app.delete("/users/{user_name}", response_model=User)
-def delete_user(user_name, current_user: UserDB = Depends(get_current_user), db: Session = Depends(get_db)):
+def delete_user(user_name, current_user: UserDB = Depends(get_current_user), db: Session = Depends(get_db), api_key: str = Depends(get_api_key)):
     if current_user.role != Role.ADMIN.value:
         raise HTTPException(status_code=403, detail="Not enough permissions")
     user = db.query(UserDB).filter(UserDB.username == user_name).first()
