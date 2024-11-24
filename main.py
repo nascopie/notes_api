@@ -2,7 +2,7 @@ from fastapi import FastAPI, Depends, HTTPException, status, Request, Security
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm, APIKeyHeader
 from pydantic import BaseModel
-from typing import List, Optional
+from typing import List, Optional, Union
 from passlib.context import CryptContext
 from datetime import datetime, timedelta
 from enum import Enum
@@ -23,10 +23,6 @@ SECRET_KEY = "secret"
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 30
 API_KEY_NAME = "X-API-Key"
-API_KEYS = {
-    "mysecretapikey": "admin",
-    "userapikey": "user"
-}
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/token")
@@ -141,39 +137,45 @@ def get_db():
     finally:
         db.close()
 
-def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)):
-    try:
-        payload = pyjwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        username: str = payload.get("sub")
-        if username is None:
+def get_current_user(token: Optional[str] = Depends(oauth2_scheme), api_key: Optional[str] = Security(api_key_header), db: Session = Depends(get_db)):
+    if token:
+        try:
+            payload = pyjwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+            username: str = payload.get("sub")
+            if username is None:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Invalid authentication credentials",
+                )
+            user = db.query(UserDB).filter(UserDB.username == username).first()
+            if user is None or not user.is_active:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Invalid authentication credentials",
+                )
+            return user
+        except pyjwt.ExpiredSignatureError:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Token has expired",
+            )
+        except pyjwt.InvalidTokenError:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid authentication credentials",
             )
-        user = db.query(UserDB).filter(UserDB.username == username).first()
-        if user is None or not user.is_active:
+    elif api_key:
+        user = db.query(UserDB).filter(UserDB.api_key == api_key).first()
+        if not user or not user.is_active:
             raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid authentication credentials",
+                status_code=status.HTTP_403_FORBIDDEN, detail="Could not validate API key"
             )
         return user
-    except pyjwt.ExpiredSignatureError:
+    else:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Token has expired",
+            detail="No authentication credentials provided",
         )
-    except pyjwt.InvalidTokenError:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid authentication credentials",
-        )
-
-def get_api_key(api_key: str = Security(api_key_header), db: Session = Depends(get_db)):
-    if api_key not in API_KEYS and not db.query(UserDB).filter(UserDB.api_key == api_key).first():
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN, detail="Could not validate API key"
-        )
-    return api_key
 
 # Logging Function
 def log_activity(request: Request, response_status: int, db: Session, username: Optional[str] = None):
@@ -186,13 +188,12 @@ def log_activity(request: Request, response_status: int, db: Session, username: 
     db.add(log_entry)
     db.commit()
 
-app = FastAPI(title="Notes API", version="1.0.0")
+app = FastAPI(title="Notes API", version="1.0.0", servers=[{"url": "http://localhost:8000", "description": "Local server"}])
 
 # Add CORS middleware to allow frontend requests
 origins = [
     "http://localhost:8080",
-    "https://cloud.apisecapps.com",
-    "https://notes-api-t5dv.onrender.com/",# Adjust as needed for deployment environment
+    "https://cloud.apisecapps.com", # Adjust as needed for deployment environment
 ]
 
 app.add_middleware(
@@ -255,7 +256,7 @@ def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(), db:
     return {"access_token": access_token, "token_type": "bearer", "api_key": user.api_key}
 
 @app.post("/notes", response_model=Note)
-def create_note(note: NoteCreate, current_user: UserDB = Depends(get_current_user), db: Session = Depends(get_db), api_key: str = Depends(get_api_key)):
+def create_note(note: NoteCreate, current_user: UserDB = Depends(get_current_user), db: Session = Depends(get_db)):
     new_note = NoteDB(
         title=note.title,
         content=note.content,
@@ -268,7 +269,7 @@ def create_note(note: NoteCreate, current_user: UserDB = Depends(get_current_use
     return new_note
 
 @app.get("/notes", response_model=List[Note])
-def get_notes(current_user: UserDB = Depends(get_current_user), db: Session = Depends(get_db), api_key: str = Depends(get_api_key)):
+def get_notes(current_user: UserDB = Depends(get_current_user), db: Session = Depends(get_db)):
     notes = db.query(NoteDB).all()
     result = [
         note for note in notes
@@ -277,23 +278,23 @@ def get_notes(current_user: UserDB = Depends(get_current_user), db: Session = De
     return result
 
 @app.delete("/notes/{note_id}", response_model=Note)
-def delete_note(note_id: int, current_user: UserDB = Depends(get_current_user), db: Session = Depends(get_db), api_key: str = Depends(get_api_key)):
+def delete_note(note_id: int, current_user: UserDB = Depends(get_current_user), db: Session = Depends(get_db)):
     note = db.query(NoteDB).filter(NoteDB.id == note_id).first()
     if not note:
-        raise HTTPException(status_code=404, detail="Note not found")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Note not found")
     if note.owner != current_user.username and current_user.role != Role.ADMIN.value:
-        raise HTTPException(status_code=403, detail="Not enough permissions")
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not enough permissions")
     db.delete(note)
     db.commit()
     return note
 
 @app.put("/notes/{note_id}", response_model=Note)
-def update_note(note_id: int, note_update: NoteUpdate, current_user: UserDB = Depends(get_current_user), db: Session = Depends(get_db), api_key: str = Depends(get_api_key)):
+def update_note(note_id: int, note_update: NoteUpdate, current_user: UserDB = Depends(get_current_user), db: Session = Depends(get_db)):
     note = db.query(NoteDB).filter(NoteDB.id == note_id).first()
     if not note:
-        raise HTTPException(status_code=404, detail="Note not found")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Note not found")
     if note.owner != current_user.username and current_user.role != Role.ADMIN.value:
-        raise HTTPException(status_code=403, detail="Not enough permissions")
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not enough permissions")
     update_data = note_update.dict(exclude_unset=True)
     for key, value in update_data.items():
         setattr(note, key, value)
@@ -301,29 +302,10 @@ def update_note(note_id: int, note_update: NoteUpdate, current_user: UserDB = De
     db.refresh(note)
     return note
 
-@app.post("/users", response_model=User)
-def create_new_user(user: UserCreate, db: Session = Depends(get_db), api_key: str = Depends(get_api_key)):
-    if db.query(UserDB).filter(UserDB.username == user.username).first():
-        raise HTTPException(status_code=400, detail="User already exists")
-    hashed_password = get_password_hash(user.password)
-    api_key = generate_api_key()
-    new_user = UserDB(
-        username=user.username,
-        full_name=user.full_name,
-        email=user.email,
-        hashed_password=hashed_password,
-        role=user.role.value,
-        api_key=api_key
-    )
-    db.add(new_user)
-    db.commit()
-    db.refresh(new_user)
-    return new_user
-
 @app.get("/logs", response_model=List[Log])
-def get_logs(current_user: UserDB = Depends(get_current_user), db: Session = Depends(get_db), api_key_role: str = Depends(get_api_key)):
-    if current_user.role != Role.ADMIN.value or api_key_role != "admin":
-        raise HTTPException(status_code=403, detail="Not enough permissions")
+def get_logs(current_user: UserDB = Depends(get_current_user), db: Session = Depends(get_db)):
+    if current_user.role != Role.ADMIN.value:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not enough permissions")
     logs = db.query(LogDB).all()
     return logs
 
