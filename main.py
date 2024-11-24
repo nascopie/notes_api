@@ -190,7 +190,9 @@ app = FastAPI(title="Notes API", version="1.0.0", servers=[{"url": "http://local
 
 # Add CORS middleware to allow frontend requests
 origins = [
-    "http://localhost:8080",  # Adjust as needed for deployment environment
+    "http://localhost:8080",
+    "https://cloud.apisecapps.com"
+    "https://notes-api-t5dv.onrender.com/"# Adjust as needed for deployment environment
 ]
 
 app.add_middleware(
@@ -367,3 +369,14 @@ def get_all_users(current_user: UserDB = Depends(get_current_user), db: Session 
         raise HTTPException(status_code=403, detail="Not enough permissions")
     users = db.query(UserDB).all()
     return users
+
+@app.delete("/users/{user_name}", response_model=User)
+def delete_user(user_name, current_user: UserDB = Depends(get_current_user), db: Session = Depends(get_db), api_key: str = Depends(get_api_key)):
+    if current_user.role != Role.ADMIN.value:
+        raise HTTPException(status_code=403, detail="Not enough permissions")
+    user = db.query(UserDB).filter(UserDB.username == user_name).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    db.delete(user)
+    db.commit()
+    return user
