@@ -310,8 +310,8 @@ def get_logs(current_user: UserDB = Depends(get_current_user), db: Session = Dep
     return logs
 
 @app.put("/users/{user_id}/deactivate", response_model=User)
-def deactivate_user(user_id: int, current_user: UserDB = Depends(get_current_user), db: Session = Depends(get_db), api_key_role: str = Depends(get_api_key)):
-    if current_user.role != Role.ADMIN.value or api_key_role != "admin":
+def deactivate_user(user_id: int, current_user: UserDB = Depends(get_current_user), db: Session = Depends(get_db)):
+    if current_user.role != Role.ADMIN.value:
         raise HTTPException(status_code=403, detail="Not enough permissions")
     user = db.query(UserDB).filter(UserDB.id == user_id).first()
     if not user:
@@ -322,8 +322,8 @@ def deactivate_user(user_id: int, current_user: UserDB = Depends(get_current_use
     return user
 
 @app.put("/users/{user_id}/reset_password", response_model=User)
-def reset_password(user_id: int, new_password: str, current_user: UserDB = Depends(get_current_user), db: Session = Depends(get_db), api_key_role: str = Depends(get_api_key)):
-    if current_user.role != Role.ADMIN.value or api_key_role != "admin":
+def reset_password(user_id: int, new_password: str, current_user: UserDB = Depends(get_current_user), db: Session = Depends(get_db)):
+    if current_user.role != Role.ADMIN.value:
         raise HTTPException(status_code=403, detail="Not enough permissions")
     user = db.query(UserDB).filter(UserDB.id == user_id).first()
     if not user:
@@ -334,8 +334,8 @@ def reset_password(user_id: int, new_password: str, current_user: UserDB = Depen
     return user
 
 @app.put("/users/{user_id}/update_role", response_model=User)
-def update_user_role(user_id: int, user_update_role: UserUpdateRole, current_user: UserDB = Depends(get_current_user), db: Session = Depends(get_db), api_key_role: str = Depends(get_api_key)):
-    if current_user.role != Role.ADMIN.value or api_key_role != "admin":
+def update_user_role(user_id: int, user_update_role: UserUpdateRole, current_user: UserDB = Depends(get_current_user), db: Session = Depends(get_db)):
+    if current_user.role != Role.ADMIN.value:
         raise HTTPException(status_code=403, detail="Not enough permissions")
     user = db.query(UserDB).filter(UserDB.id == user_id).first()
     if not user:
@@ -346,14 +346,14 @@ def update_user_role(user_id: int, user_update_role: UserUpdateRole, current_use
     return user
 
 @app.get("/users", response_model=List[User])
-def get_all_users(current_user: UserDB = Depends(get_current_user), db: Session = Depends(get_db), api_key_role: str = Depends(get_api_key)):
-    if current_user.role != Role.ADMIN.value or api_key_role != "admin":
+def get_all_users(current_user: UserDB = Depends(get_current_user), db: Session = Depends(get_db)):
+    if current_user.role != Role.ADMIN.value:
         raise HTTPException(status_code=403, detail="Not enough permissions")
     users = db.query(UserDB).all()
     return users
 
 @app.delete("/users/{user_name}", response_model=User)
-def delete_user(user_name, current_user: UserDB = Depends(get_current_user), db: Session = Depends(get_db), api_key: str = Depends(get_api_key)):
+def delete_user(user_name, current_user: UserDB = Depends(get_current_user), db: Session = Depends(get_db)):
     if current_user.role != Role.ADMIN.value:
         raise HTTPException(status_code=403, detail="Not enough permissions")
     user = db.query(UserDB).filter(UserDB.username == user_name).first()
