@@ -171,7 +171,8 @@ app = FastAPI(title="Notes API", version="1.0.0")
 
 # Add CORS middleware to allow frontend requests
 origins = [
-    "http://localhost:8080",  # Adjust as needed for deployment environment
+    "http://localhost:8080",
+    "https://cloud.apisecapps.com",# Adjust as needed for deployment environment
 ]
 
 app.add_middleware(
